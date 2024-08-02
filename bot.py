@@ -1,7 +1,8 @@
-import os
 import discord
-import pydub
+import io
 import logging
+import os
+import pydub
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,6 +18,8 @@ intents.guild_messages = True
 
 # Create the bot instance
 bot = discord.Bot(intents=intents, command_prefix="/")
+
+connections = {}
 
 
 @bot.command(name="join", description="Join a voice channel")
@@ -40,9 +43,72 @@ async def join_command(
             content=f"Already connected to a voice channel, leaving and joining {channel.name}!"
         )
         await ctx.guild.voice_client.disconnect()
-    await channel.connect(cls=AudioReceiver)
+    await channel.connect(timeout=3)
     # Start listening for audio
     await interaction.edit_original_response(content=f"Joined {channel.name}!")
+
+    # https://guide.pycord.dev/voice/receiving
+    vc = ctx.guild.voice_client
+    connections.update(
+        {ctx.guild.id: vc}
+    )  # Updating the cache with the guild and channel.
+
+    vc.start_recording(
+        MySink(),  # The sink type to use.
+        once_done,  # What to do once done.
+        # ctx.channel,  # The channel to disconnect from.
+    )
+    await interaction.edit_original_response(content="Started recording!")
+
+# Implenment a sink that convert audio data into AudioSegment
+class MySink(discord.sinks.Sink):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.audio_segments = {}
+
+    @discord.sinks.Filters.container
+    def write(self, data, user):
+        # Decode the audio data
+        file = io.BytesIO()
+        file.write(data)
+        audio_segment = pydub.AudioSegment.from_raw(
+            file,
+            frame_rate=48000,
+            sample_width=2,
+            channels=2,
+            frame_format="s16le",
+        )
+        if user not in self.audio_segments:
+            self.audio_segments.update({user: []})
+        # self.audio_segments[user].append(audio_segment)
+
+    def cleanup(self):
+        self.finished = True
+        for user, segments in self.audio_segments.items():
+            # Concatenate the audio segments
+            audio_segment = pydub.AudioSegment.empty()
+            for segment in segments:
+                audio_segment += segment
+            # Save the audio segment to a file
+            audio_segment.export(f"{user}.wav", format="wav")
+
+
+# Define a callback function to be called when recording is finished
+async def once_done(
+    sink: discord.sinks, channel: discord.TextChannel, *args
+):  # Our voice client already passes these in.
+    pass
+    # recorded_users = [  # A list of recorded users
+    #     f"<@{user_id}>" for user_id, audio in sink.audio_data.items()
+    # ]
+    # await sink.vc.disconnect()  # Disconnect from the voice channel.
+    # files = [
+    #     discord.File(audio.file, f"{user_id}.{sink.encoding}")
+    #     for user_id, audio in sink.audio_data.items()
+    # ]  # List down the files.
+    # await channel.send(
+    #     f"finished recording audio for: {', '.join(recorded_users)}.", files=files
+    # )  # Send a message with the accumulated files.
 
 
 @bot.command(name="leave", description="Leave the current voice channel")
@@ -64,34 +130,6 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     print(f"Received message from {message.author}: {message.content}")
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
-        return
-    # Sync command if end with !sync
-    if message.content.endswith("!sync"):
-        await bot.sync_commands(force=True)
-        await message.channel.send("Synced commands!")
-
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if before.channel:
-        print(f"User {member.name} left {before.channel}")
-    if after.channel:
-        print(f"User {member.name} joined {after.channel}")
-
-
-class AudioReceiver(discord.VoiceClient):
-    def __init__(self, client, channel):
-        super().__init__(client, channel)
-
-    async def on_voice_packet(self, data, user):
-        print(f"Received audio data from {user}: {data}")
-        audio_segment = pydub.AudioSegment.from_raw(
-            data, frame_rate=48000, channels=2, sample_width=2, frame_format="s16le"
-        )
-        # Do something with the AudioSegment object
-        print(f"Transformed audio segment: {audio_segment}")
 
 
 bot.run(token)
