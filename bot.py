@@ -1,6 +1,5 @@
 import asyncio
 import discord
-import io
 import logging
 import os
 import pydub
@@ -79,9 +78,9 @@ async def join_command(
                 )
                 raise
 
-    await retry(channel, interaction, 3, 1)
+    await retry(channel, interaction, 10, 1)
     # await channel.connect(timeout=3)
-    await ctx.guild.change_voice_state(channel=channel, self_mute=True)
+    await channel.guild.change_voice_state(channel=channel, self_mute=True)
 
     # Start listening for audio
     await interaction.edit_original_response(content=f"Joined {channel.name}!")
@@ -106,23 +105,20 @@ class MySink(discord.sinks.Sink):
 
     @discord.sinks.Filters.container
     def write(self, data, user):
-        # Decode the audio data
-        file = io.BytesIO()
-        file.write(data)
-        audio_segment = pydub.AudioSegment.from_raw(
-            file,
-            frame_rate=48000,
-            sample_width=2,
-            channels=2,
-            frame_format="s16le",
+        audio_segment = pydub.AudioSegment(
+            data,
+            frame_rate=self.vc.decoder.SAMPLING_RATE,
+            #sample_width=self.vc.decoder.SAMPLE_SIZE,
+            sample_width=2, # I really don't know why
+            channels=self.vc.decoder.CHANNELS,
         )
+        # Get the last chunk of audio for the user
         last_chunk = self.audio_segments.get(user)
-        # TODO
-        last_chunk = audio_segment
+        last_chunk = process_audio_segment(audio_segment, last_chunk)
+        if last_chunk is not None:
+          print(f"last chunk duration: {last_chunk.duration_seconds}s")
         # Process the audio segment
         self.audio_segments.update({user: last_chunk})
-        # process_audio_segment(user, None)
-        # process_audio_segment(audio_segment, last_chunk)
 
     def cleanup(self):
         self.finished = True
@@ -159,8 +155,10 @@ async def on_message(message):
 # bot.run(token)
 
 
-def process_audio_segment():
-    pass
+# Define process_audio_segment function if the function is not defined
+if "process_audio_segment" not in globals():
+    def process_audio_segment(audio_segment: pydub.AudioSegment, last_chunk: pydub.AudioSegment):
+        pass
 
 
 try:
