@@ -1,8 +1,10 @@
 import asyncio
+import time
 import discord
 import logging
 import os
 import pydub
+from pydub.silence import split_on_silence
 import struct
 
 logging.basicConfig(level=logging.INFO)
@@ -99,12 +101,19 @@ async def join_command(
 # Implenment a sink that convert audio data into AudioSegment
 class MySink(discord.sinks.Sink):
     audio_segments = {}
+    audio_buffer = bytearray()
+    min_audio_length = 3840 * 50
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     @discord.sinks.Filters.container
     def write(self, data, user):
+        self.audio_buffer.extend(data)
+        if len(self.audio_buffer) < self.min_audio_length:
+            return
+        data = bytes(self.audio_buffer)
+        self.audio_buffer = bytearray()
         audio_segment = pydub.AudioSegment(
             data,
             frame_rate=self.vc.decoder.SAMPLING_RATE,
@@ -158,7 +167,34 @@ async def on_message(message):
 # Define process_audio_segment function if the function is not defined
 if "process_audio_segment" not in globals():
     def process_audio_segment(audio_segment: pydub.AudioSegment, last_chunk: pydub.AudioSegment):
-        pass
+        if last_chunk is not None:
+            audio_segment = last_chunk + audio_segment
+            last_chunk = None
+
+        # Split audio based on silence
+        chunks = split_on_silence(
+            audio_segment,
+            min_silence_len=1000,
+            # min_silence_len=500,
+            keep_silence=1500,
+            silence_thresh=-40
+        )
+        print(f"Number of chunks: {len(chunks)}")
+
+        # Handle last chunk
+        if len(chunks) > 0:
+            last_chunk = chunks[-1]
+        if len(chunks) > 1:
+            # Merge chunks[:-1] and export
+            merged_chunks = chunks[:-1]
+            merged_audio: pydub.AudioSegment = sum(merged_chunks)
+            filename = f"audio-{time.time()}.wav"
+            merged_audio.export(
+                filename, format="wav", parameters=["-ac", "2", "-ar", "48000"]
+            )
+            print(f"Audio exported to {filename}")
+
+        return last_chunk
 
 
 try:
