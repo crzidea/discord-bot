@@ -10,10 +10,7 @@ import struct
 logging.basicConfig(level=logging.INFO)
 
 # Read token from environment variable
-token = os.getenv("DISCORD_TOKEN")
-if token is None:
-    token = userdata.get("DISCORD_TOKEN")
-
+discord_token = os.getenv("DISCORD_TOKEN")
 
 # discord.VoiceClient.supported_modes = "xsalsa20_poly1305"
 # Override code to fix protocol
@@ -199,7 +196,7 @@ if "process_audio_segment" not in globals():
 
 try:
     loop = asyncio.get_running_loop()
-    loop.create_task(bot.run(token))
+    loop.create_task(bot.run(discord_token))
 except RuntimeError:
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(bot.run(token))
+    loop.run_until_complete(bot.run(discord_token))
